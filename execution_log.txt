@@ -1,0 +1,762 @@
+myls lab - execution log (real captured output of every code cell, in order)
+====================================================================================================
+In [1]   # locale / timezone
+----------------------------------------------------------------------------------------------------
+%env LC_ALL=C
+%env TZ=UTC
+----------------------------------------------------------------------------------------------------
+Out[1]
+env: LC_ALL=C
+env: TZ=UTC
+
+====================================================================================================
+In [2]   # toolchain versions
+----------------------------------------------------------------------------------------------------
+%%bash
+gcc --version | head -1
+ls --version | head -1
+uname -sr
+echo "uid=$(id -u)  ($(id -un))"
+----------------------------------------------------------------------------------------------------
+Out[2]
+gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+ls (GNU coreutils) 9.4
+Linux 6.18.44-fc-v726
+uid=0  (root)
+
+====================================================================================================
+In [3]   # full C source
+----------------------------------------------------------------------------------------------------
+%%writefile myls.c   [file content omitted in log]
+----------------------------------------------------------------------------------------------------
+Out[3]
+Writing myls.c
+
+====================================================================================================
+In [4]   # compile
+----------------------------------------------------------------------------------------------------
+%%bash
+gcc -std=gnu11 -Wall -Wextra -Wpedantic -O2 -o myls myls.c && echo "BUILD OK: $(wc -l < myls.c) lines of C, binary $(stat -c %s myls) bytes"
+----------------------------------------------------------------------------------------------------
+Out[4]
+BUILD OK: 529 lines of C, binary 27040 bytes
+
+====================================================================================================
+In [5]   # symbol proof
+----------------------------------------------------------------------------------------------------
+%%bash
+nm -D --undefined-only myls | awk '{print $2}' | sed 's/@.*//' | grep -E '^(syscall|lstat|stat|open|readlink|ioctl|close|isatty|opendir|readdir)' | sort | tr '\n' ' '; echo
+echo "opendir/readdir imported: $(nm -D --undefined-only myls | grep -cE 'opendir|readdir')"
+----------------------------------------------------------------------------------------------------
+Out[5]
+close ioctl isatty lstat open readlink stat syscall 
+opendir/readdir imported: 0
+
+====================================================================================================
+In [6]   # create demo tree
+----------------------------------------------------------------------------------------------------
+%%bash
+rm -rf demo && mkdir -p demo/src/utils demo/docs demo/empty demo/.git
+printf 'int main(void){return 0;}\n' > demo/src/main.c
+printf '/* helpers */\n'             > demo/src/utils/helper.c
+printf '# Demo project\n'            > demo/README.md
+printf '#!/bin/sh\necho hi\n'        > demo/run.sh && chmod 755 demo/run.sh
+echo 'API_KEY=secret'                > demo/.env   && chmod 600 demo/.env
+head -c 2048    /dev/zero > demo/docs/manual.pdf
+head -c 1500000 /dev/zero > demo/docs/video.bin
+ln -s README.md demo/readme.lnk
+ln -s src       demo/srclink
+touch -d '2024-01-15 09:30' demo/docs/manual.pdf
+touch -d '2 hours ago'      demo/docs/video.bin
+echo "Structure created (find | sort):"; find demo | sort
+
+----------------------------------------------------------------------------------------------------
+Out[6]
+Structure created (find | sort):
+demo
+demo/.env
+demo/.git
+demo/README.md
+demo/docs
+demo/docs/manual.pdf
+demo/docs/video.bin
+demo/empty
+demo/readme.lnk
+demo/run.sh
+demo/src
+demo/src/main.c
+demo/src/utils
+demo/src/utils/helper.c
+demo/srclink
+
+====================================================================================================
+In [7]   # short listings: default, hidden, classify, inode
+----------------------------------------------------------------------------------------------------
+%%bash
+echo '$ ./myls demo';            ./myls demo
+echo; echo '$ ./myls -a demo';   ./myls -a demo
+echo; echo '$ ./myls -F demo';   ./myls -F demo
+echo; echo '$ ./myls -i demo/src'; ./myls -i demo/src
+
+----------------------------------------------------------------------------------------------------
+Out[7]
+$ ./myls demo
+README.md
+docs
+empty
+readme.lnk
+run.sh
+src
+srclink
+
+$ ./myls -a demo
+.
+..
+.env
+.git
+README.md
+docs
+empty
+readme.lnk
+run.sh
+src
+srclink
+
+$ ./myls -F demo
+README.md
+docs/
+empty/
+readme.lnk@
+run.sh*
+src/
+srclink@
+
+$ ./myls -i demo/src
+622604 main.c
+622600 utils
+
+====================================================================================================
+In [8]   # long listings + diff against GNU ls
+----------------------------------------------------------------------------------------------------
+%%bash
+echo '$ ./myls -la demo'; ./myls -la demo
+echo; echo '$ ./myls -lh demo/docs'; ./myls -lh demo/docs
+echo; echo '--- compare with GNU ls ---'
+diff <(ls -la demo)      <(./myls -la demo)      && echo 'myls -la  demo       : IDENTICAL to GNU ls'
+diff <(ls -lh demo/docs) <(./myls -lh demo/docs) && echo 'myls -lh  demo/docs  : IDENTICAL to GNU ls'
+
+----------------------------------------------------------------------------------------------------
+Out[8]
+$ ./myls -la demo
+total 36
+drwxr-xr-x 6 root root 4096 Nov 20 12:27 .
+drwxr-xr-x 3 root root 4096 Nov 20 12:27 ..
+-rw------- 1 root root   15 Nov 20 12:27 .env
+drwxr-xr-x 2 root root 4096 Nov 20 12:27 .git
+-rw-r--r-- 1 root root   15 Nov 20 12:27 README.md
+drwxr-xr-x 2 root root 4096 Nov 20 12:27 docs
+drwxr-xr-x 2 root root 4096 Nov 20 12:27 empty
+lrwxrwxrwx 1 root root    9 Nov 20 12:27 readme.lnk -> README.md
+-rwxr-xr-x 1 root root   18 Nov 20 12:27 run.sh
+drwxr-xr-x 3 root root 4096 Nov 20 12:27 src
+lrwxrwxrwx 1 root root    3 Nov 20 12:27 srclink -> src
+
+$ ./myls -lh demo/docs
+total 1.5M
+-rw-r--r-- 1 root root 2.0K Jan 15  2024 manual.pdf
+-rw-r--r-- 1 root root 1.5M Nov 20 10:27 video.bin
+
+--- compare with GNU ls ---
+myls -la  demo       : IDENTICAL to GNU ls
+myls -lh  demo/docs  : IDENTICAL to GNU ls
+
+====================================================================================================
+In [9]   # recursion, sorting, -d
+----------------------------------------------------------------------------------------------------
+%%bash
+echo '$ ./myls -R demo'; ./myls -R demo
+echo; echo '$ ./myls -lS demo/docs    (largest first)'; ./myls -lS demo/docs
+echo; echo '$ ./myls -ltr demo/docs   (oldest first)';   ./myls -ltr demo/docs
+echo; echo '$ ./myls -d demo demo/src demo/README.md'; ./myls -d demo demo/src demo/README.md
+
+----------------------------------------------------------------------------------------------------
+Out[9]
+$ ./myls -R demo
+demo:
+README.md
+docs
+empty
+readme.lnk
+run.sh
+src
+srclink
+
+demo/docs:
+manual.pdf
+video.bin
+
+demo/empty:
+
+demo/src:
+main.c
+utils
+
+demo/src/utils:
+helper.c
+
+$ ./myls -lS demo/docs    (largest first)
+total 1472
+-rw-r--r-- 1 root root 1500000 Nov 20 10:27 video.bin
+-rw-r--r-- 1 root root    2048 Jan 15  2024 manual.pdf
+
+$ ./myls -ltr demo/docs   (oldest first)
+total 1472
+-rw-r--r-- 1 root root    2048 Jan 15  2024 manual.pdf
+-rw-r--r-- 1 root root 1500000 Nov 20 10:27 video.bin
+
+$ ./myls -d demo demo/src demo/README.md
+demo
+demo/README.md
+demo/src
+
+====================================================================================================
+In [10]   # hard links, symbolic links
+----------------------------------------------------------------------------------------------------
+%%bash
+ln demo/README.md demo/README.hard
+echo '$ ./myls -li demo | grep -E "README|readme|srclink"'
+./myls -li demo | grep -E 'README|readme|srclink'
+echo
+echo '  -> README.md and README.hard share one inode and show link count 2 (hard link).'
+echo '  -> readme.lnk / srclink are separate inodes of type l (symbolic links) showing "-> target".'
+echo; echo '$ ./myls demo/srclink      (symlink to a directory is followed without -l)'; ./myls demo/srclink
+echo; echo '$ ./myls -ld demo/srclink  (-l / -d do not follow it)';                        ./myls -ld demo/srclink
+
+----------------------------------------------------------------------------------------------------
+Out[10]
+$ ./myls -li demo | grep -E "README|readme|srclink"
+622606 -rw-r--r-- 2 root root   15 Nov 20 12:27 README.hard
+622606 -rw-r--r-- 2 root root   15 Nov 20 12:27 README.md
+622611 lrwxrwxrwx 1 root root    9 Nov 20 12:27 readme.lnk -> README.md
+622612 lrwxrwxrwx 1 root root    3 Nov 20 12:27 srclink -> src
+
+  -> README.md and README.hard share one inode and show link count 2 (hard link).
+  -> readme.lnk / srclink are separate inodes of type l (symbolic links) showing "-> target".
+
+$ ./myls demo/srclink      (symlink to a directory is followed without -l)
+main.c
+utils
+
+$ ./myls -ld demo/srclink  (-l / -d do not follow it)
+lrwxrwxrwx 1 root root 3 Nov 20 12:27 demo/srclink -> src
+
+====================================================================================================
+In [11]   # permission fixtures vs stat
+----------------------------------------------------------------------------------------------------
+%%bash
+rm -rf perms_lab && mkdir perms_lab && cd perms_lab
+for m in 000 400 600 644 755 777 4755 2755 4644 1644 7777; do touch f_$m; chmod $m f_$m; done
+mkdir d_755 d_700 d_1777 d_2775; chmod 755 d_755; chmod 700 d_700; chmod 1777 d_1777; chmod 2775 d_2775
+cd ..
+echo '$ ./myls -lO perms_lab'
+./myls -lO perms_lab
+echo
+exp=$(cd perms_lab && for f in $(ls -A); do printf '%04d %s %s\n' "$(stat -c %a $f)" "$(stat -c %A $f)" "$f"; done)
+got=$(./myls -laO perms_lab | awk 'NR>1 && $NF!="." && $NF!=".." {print $1,$2,$NF}')
+[ "$exp" = "$got" ] && echo "VERIFIED: octal + symbolic permission of all $(echo "$exp" | wc -l) entries match stat(1)" || { echo MISMATCH; diff <(echo "$exp") <(echo "$got"); }
+
+----------------------------------------------------------------------------------------------------
+Out[11]
+$ ./myls -lO perms_lab
+total 16
+1777 drwxrwxrwt 2 root root 4096 Nov 20 12:27 d_1777
+2775 drwxrwsr-x 2 root root 4096 Nov 20 12:27 d_2775
+0700 drwx------ 2 root root 4096 Nov 20 12:27 d_700
+0755 drwxr-xr-x 2 root root 4096 Nov 20 12:27 d_755
+0000 ---------- 1 root root    0 Nov 20 12:27 f_000
+1644 -rw-r--r-T 1 root root    0 Nov 20 12:27 f_1644
+2755 -rwxr-sr-x 1 root root    0 Nov 20 12:27 f_2755
+0400 -r-------- 1 root root    0 Nov 20 12:27 f_400
+4644 -rwSr--r-- 1 root root    0 Nov 20 12:27 f_4644
+4755 -rwsr-xr-x 1 root root    0 Nov 20 12:27 f_4755
+0600 -rw------- 1 root root    0 Nov 20 12:27 f_600
+0644 -rw-r--r-- 1 root root    0 Nov 20 12:27 f_644
+0755 -rwxr-xr-x 1 root root    0 Nov 20 12:27 f_755
+0777 -rwxrwxrwx 1 root root    0 Nov 20 12:27 f_777
+7777 -rwsrwsrwt 1 root root    0 Nov 20 12:27 f_7777
+
+VERIFIED: octal + symbolic permission of all 15 entries match stat(1)
+
+====================================================================================================
+In [12]   # real system objects
+----------------------------------------------------------------------------------------------------
+%%bash
+exec 2>&1
+echo 'Real system objects (directories shown themselves via -d):'
+./myls -ldO /tmp /etc/shadow /usr/bin/passwd /usr/bin/mount /dev/null 2>&1
+echo
+echo 'Reference:'
+for f in /tmp /etc/shadow /usr/bin/passwd /usr/bin/mount /dev/null; do [ -e $f ] && printf '%04d %s %s\n' "$(stat -c %a $f)" "$(stat -c %A $f)" "$f"; done
+
+----------------------------------------------------------------------------------------------------
+Out[12]
+Real system objects (directories shown themselves via -d):
+0666 crw-rw-rw- 1 root root    1, 3 Nov 20 05:56 /dev/null
+0640 -rw-r----- 1 root shadow   609 Nov 17 20:52 /etc/shadow
+1777 drwxrwxrwt 6 root root    4096 Nov 20 12:27 /tmp
+4755 -rwsr-xr-x 1 root root   51584 Aug 19 16:47 /usr/bin/mount
+4755 -rwsr-xr-x 1 root root   64152 May 30  2024 /usr/bin/passwd
+
+Reference:
+1777 drwxrwxrwt /tmp
+0640 -rw-r----- /etc/shadow
+4755 -rwsr-xr-x /usr/bin/passwd
+4755 -rwsr-xr-x /usr/bin/mount
+0666 crw-rw-rw- /dev/null
+
+====================================================================================================
+In [13]   # exhaustive 4096 modes
+----------------------------------------------------------------------------------------------------
+%%bash
+rm -rf allperms && mkdir allperms
+python3 - <<'PY'
+import os
+for i in range(4096):
+    p = f"allperms/m{i:04o}"; open(p, "w").close(); os.chmod(p, i)
+PY
+python3 - <<'PY'
+import os, stat, subprocess
+out = subprocess.run(["./myls", "-lO", "allperms"], capture_output=True, text=True).stdout.splitlines()[1:]
+bad = 0
+for line in out:
+    octal, sym, *_, name = line.split()
+    mode = os.lstat("allperms/" + name).st_mode
+    if sym != stat.filemode(mode) or octal != f"{mode & 0o7777:04o}": bad += 1
+print(f"files listed: {len(out)}   mismatches vs stat.filemode(): {bad}")
+print("RESULT:", "ALL 4096 PERMISSION PATTERNS CORRECT" if bad == 0 and len(out) == 4096 else "FAILED")
+print("samples:", *[l.split()[0] + " " + l.split()[1] for l in (out[0], out[0o644], out[0o755], out[0o4755], out[0o2755], out[0o1777], out[0o7777])], sep="\n   ")
+PY
+
+----------------------------------------------------------------------------------------------------
+Out[13]
+files listed: 4096   mismatches vs stat.filemode(): 0
+RESULT: ALL 4096 PERMISSION PATTERNS CORRECT
+samples:
+   0000 ----------
+   0644 -rw-r--r--
+   0755 -rwxr-xr-x
+   4755 -rwsr-xr-x
+   2755 -rwxr-sr-x
+   1777 -rwxrwxrwt
+   7777 -rwsrwsrwt
+
+====================================================================================================
+In [14]   # all seven file types
+----------------------------------------------------------------------------------------------------
+%%bash
+rm -rf types_lab && mkdir types_lab && cd types_lab
+touch regular; mkdir dir; ln -s regular symlink; mkfifo fifo
+python3 -c "import socket; s=socket.socket(socket.AF_UNIX); s.bind('sock')"
+mknod chardev c 1 3 2>/dev/null; mknod blockdev b 7 0 2>/dev/null
+cd ..
+./myls -lF types_lab
+
+----------------------------------------------------------------------------------------------------
+Out[14]
+total 4
+brw-r--r-- 1 root root 7, 0 Nov 20 12:27 blockdev
+crw-r--r-- 1 root root 1, 3 Nov 20 12:27 chardev
+drwxr-xr-x 2 root root 4096 Nov 20 12:27 dir/
+prw-r--r-- 1 root root    0 Nov 20 12:27 fifo|
+-rw-r--r-- 1 root root    0 Nov 20 12:27 regular
+srwxr-xr-x 1 root root    0 Nov 20 12:27 sock=
+lrwxrwxrwx 1 root root    7 Nov 20 12:27 symlink -> regular
+
+====================================================================================================
+In [15]   # permission denied as unprivileged user
+----------------------------------------------------------------------------------------------------
+%%bash
+exec 2>&1
+# fixtures + a world-executable copy of the binary live in /tmp so uid 65534 can reach them
+rm -rf /tmp/acl_lab && mkdir -p /tmp/acl_lab/open /tmp/acl_lab/locked /tmp/acl_lab/listonly /tmp/acl_lab/searchonly
+install -m 755 myls /tmp/myls_acl
+cd /tmp
+echo a > acl_lab/open/a; echo a > acl_lab/listonly/a; echo b > acl_lab/listonly/b; echo k > acl_lab/searchonly/known
+chmod 000 acl_lab/locked; chmod 444 acl_lab/listonly; chmod 111 acl_lab/searchonly; chmod 755 acl_lab
+N="setpriv --reuid=65534 --regid=65534 --clear-groups"
+run() { echo "\$ [uid 65534] myls $*"; $N /tmp/myls_acl "$@"; echo "  exit status: $?"; echo; }
+run acl_lab/locked
+run acl_lab/searchonly
+run acl_lab/listonly
+run -l acl_lab/listonly
+run -R acl_lab
+run -l acl_lab/searchonly/known
+echo "--- GNU ls: identical diagnostics and exit codes (for comparison) ---"
+for d in locked searchonly; do echo "\$ [uid 65534] ls acl_lab/$d"; $N ls acl_lab/$d; echo "  exit status: $?"; done
+rm -f /tmp/myls_acl
+
+----------------------------------------------------------------------------------------------------
+Out[15]
+$ [uid 65534] myls acl_lab/locked
+myls: cannot open directory 'acl_lab/locked': Permission denied
+  exit status: 2
+
+$ [uid 65534] myls acl_lab/searchonly
+myls: cannot open directory 'acl_lab/searchonly': Permission denied
+  exit status: 2
+
+$ [uid 65534] myls acl_lab/listonly
+a
+b
+  exit status: 0
+
+$ [uid 65534] myls -l acl_lab/listonly
+myls: cannot access 'acl_lab/listonly/b': Permission denied
+myls: cannot access 'acl_lab/listonly/a': Permission denied
+total 0
+?????????? ? ? ? ? ? a
+?????????? ? ? ? ? ? b
+  exit status: 1
+
+$ [uid 65534] myls -R acl_lab
+acl_lab:
+listonly
+locked
+open
+searchonly
+
+acl_lab/listonly:
+a
+b
+myls: cannot open directory 'acl_lab/locked': Permission denied
+
+acl_lab/open:
+a
+myls: cannot open directory 'acl_lab/searchonly': Permission denied
+  exit status: 1
+
+$ [uid 65534] myls -l acl_lab/searchonly/known
+-rw-r--r-- 1 root root 2 Nov 20 12:27 acl_lab/searchonly/known
+  exit status: 0
+
+--- GNU ls: identical diagnostics and exit codes (for comparison) ---
+$ [uid 65534] ls acl_lab/locked
+ls: cannot open directory 'acl_lab/locked': Permission denied
+  exit status: 2
+$ [uid 65534] ls acl_lab/searchonly
+ls: cannot open directory 'acl_lab/searchonly': Permission denied
+  exit status: 2
+
+====================================================================================================
+In [16]   # missing operands and bad option
+----------------------------------------------------------------------------------------------------
+%%bash
+exec 2>&1
+echo '$ ./myls nosuchdir';                     ./myls nosuchdir;                     echo "  exit status: $?"
+echo '$ ./myls demo/README.md nosuch demo/src'; ./myls demo/README.md nosuch demo/src; echo "  exit status: $?"
+echo '$ ./myls -Z demo';                       ./myls -Z demo;                       echo "  exit status: $?"
+
+----------------------------------------------------------------------------------------------------
+Out[16]
+$ ./myls nosuchdir
+myls: cannot access 'nosuchdir': No such file or directory
+  exit status: 2
+$ ./myls demo/README.md nosuch demo/src
+myls: cannot access 'nosuch': No such file or directory
+demo/README.md
+
+demo/src:
+main.c
+utils
+  exit status: 2
+$ ./myls -Z demo
+myls: invalid option -- 'Z'
+usage: myls [-adlRiShtr1FO] [file ...]
+  exit status: 2
+
+====================================================================================================
+In [17]   # column layout on a pty
+----------------------------------------------------------------------------------------------------
+%%bash
+mkdir -p /tmp/cols && cd /tmp/cols && rm -f * && touch alpha.c beta.c gamma.c delta.h epsilon.h zeta.txt eta.txt theta.md iota.md kappa.py lambda.py mu.go
+echo '--- myls (60 cols) ---'; script -qec "stty cols 60; $OLDPWD/myls /tmp/cols" /dev/null </dev/null | tr -d '\r'
+echo '--- GNU ls (60 cols) ---'; script -qec "stty cols 60; ls /tmp/cols" /dev/null </dev/null | tr -d '\r'
+
+----------------------------------------------------------------------------------------------------
+Out[17]
+--- myls (60 cols) ---
+alpha.c    epsilon.h  iota.md    mu.go
+beta.c     eta.txt    kappa.py   theta.md
+delta.h    gamma.c    lambda.py  zeta.txt
+--- GNU ls (60 cols) ---
+alpha.c  delta.h    eta.txt  iota.md   lambda.py  theta.md
+beta.c	 epsilon.h  gamma.c  kappa.py  mu.go	  zeta.txt
+
+====================================================================================================
+In [18]   # test-suite script
+----------------------------------------------------------------------------------------------------
+%%writefile run_tests.sh   [file content omitted in log]
+----------------------------------------------------------------------------------------------------
+Out[18]
+Writing run_tests.sh
+
+====================================================================================================
+In [19]   # chmod
+----------------------------------------------------------------------------------------------------
+%%bash
+chmod +x run_tests.sh && bash -n run_tests.sh && echo 'run_tests.sh: syntax OK'
+----------------------------------------------------------------------------------------------------
+Out[19]
+run_tests.sh: syntax OK
+
+====================================================================================================
+In [20]   # RUN FULL TEST SUITE
+----------------------------------------------------------------------------------------------------
+%%bash
+./run_tests.sh ./myls
+----------------------------------------------------------------------------------------------------
+Out[20]
+myls test-suite   2026-11-20 12:27:12 UTC
+binary : /home/claude/nb_run/myls
+gnu ls : ls (GNU coreutils) 9.4
+kernel : Linux 6.18.44-fc-v726    running as uid 0
+fixtures built in /tmp/myls_lab: 1610 filesystem objects
+fixture sanity check: all expected paths exist
+
+== 1. Basic listing (compared byte-for-byte with GNU ls) ==
+  PASS  myls flat    (exit 0)
+  PASS  myls -1 flat    (exit 0)
+  PASS  myls empty    (exit 0)
+  PASS  myls -a empty    (exit 0)
+  PASS  myls hidden    (exit 0)
+  PASS  myls -a hidden    (exit 0)
+  PASS  myls -r flat    (exit 0)
+  PASS  myls -ra flat    (exit 0)
+  PASS  myls -l flat    (exit 0)
+  PASS  myls -la flat    (exit 0)
+  PASS  myls -i flat    (exit 0)
+  PASS  myls -il flat    (exit 0)
+  PASS  myls -d flat    (exit 0)
+  PASS  myls -ld flat hidden perms/d_1777    (exit 0)
+  PASS  myls -ld .    (exit 0)
+  PASS  myls -d links/dirlink    (exit 0)
+  PASS  myls -ld links/dirlink    (exit 0)
+
+== 2. Directory structures ==
+  PASS  myls nested    (exit 0)
+  PASS  myls -R nested    (exit 0)
+  PASS  myls -R .    (exit 0)
+  PASS  myls -laR nested    (exit 0)
+  PASS  myls -R hidden    (exit 0)
+  PASS  myls -aR hidden    (exit 0)
+  PASS  myls flat hidden    (exit 0)
+  PASS  myls flat empty hidden    (exit 0)
+  PASS  myls flat/a.txt flat/B.txt    (exit 0)
+  PASS  myls flat/a.txt hidden    (exit 0)
+  PASS  myls -l flat/a.txt hidden empty    (exit 0)
+  PASS  myls big    (exit 0)
+  PASS  myls -l big    (exit 0)
+  PASS  myls -R big    (exit 0)
+  PASS  myls longname    (exit 0)
+  PASS  myls -l longname    (exit 0)
+  PASS  myls . ..    (exit 0)
+  PASS  myls ./flat/    (exit 0)
+  PASS  myls flat//    (exit 0)
+
+== 3. Sorting and formatting options ==
+  PASS  myls -t times    (exit 0)
+  PASS  myls -tr times    (exit 0)
+  PASS  myls -lt times    (exit 0)
+  PASS  myls -S sizes    (exit 0)
+  PASS  myls -Sr sizes    (exit 0)
+  PASS  myls -lS sizes    (exit 0)
+  PASS  myls -lh sizes    (exit 0)
+  PASS  myls -lhS sizes    (exit 0)
+  PASS  myls -F flat    (exit 0)
+  PASS  myls -F links    (exit 0)
+  PASS  myls -lF links    (exit 0)
+  PASS  myls -F special    (exit 0)
+  PASS  myls -l times    (exit 0)
+  PASS  myls -l -t -r times    (exit 0)
+
+== 4. Symbolic links, hard links, special files ==
+  PASS  myls -l links    (exit 0)
+  PASS  myls links    (exit 0)
+  PASS  myls links/dirlink    (exit 0)
+  PASS  myls -l links/dirlink    (exit 0)
+  PASS  myls -l links/dangling links/soft.txt    (exit 0)
+  PASS  myls -i links    (exit 0)
+  PASS  myls -l special    (exit 0)
+  PASS  myls special    (exit 0)
+
+== 5. Permission flags (ls -l mode string vs stat(1), octal via -O) ==
+  PASS  perm bits of perms vs stat: 37 entries identical
+  PASS  perm bits of sizes vs stat: 9 entries identical
+  PASS  perm bits of links vs stat: 6 entries identical
+  PASS  perm bits of special vs stat: 7 entries identical
+  --- sample of the permission fixtures as listed by myls -lO ---
+        total 32
+        0000 d--------- 2 root root 4096 Nov 20 12:27 d_000
+        1777 drwxrwxrwt 2 root root 4096 Nov 20 12:27 d_1777
+        2775 drwxrwsr-x 2 root root 4096 Nov 20 12:27 d_2775
+        3777 drwxrwsrwt 2 root root 4096 Nov 20 12:27 d_3777
+        4755 drwsr-xr-x 2 root root 4096 Nov 20 12:27 d_4755
+        0555 dr-xr-xr-x 2 root root 4096 Nov 20 12:27 d_555
+        0700 drwx------ 2 root root 4096 Nov 20 12:27 d_700
+        0755 drwxr-xr-x 2 root root 4096 Nov 20 12:27 d_755
+        0000 ---------- 1 root root    0 Nov 20 12:27 f_000
+        1644 -rw-r--r-T 1 root root    0 Nov 20 12:27 f_1644
+        1755 -rwxr-xr-t 1 root root    0 Nov 20 12:27 f_1755
+        2644 -rw-r-Sr-- 1 root root    0 Nov 20 12:27 f_2644
+        2755 -rwxr-sr-x 1 root root    0 Nov 20 12:27 f_2755
+        0400 -r-------- 1 root root    0 Nov 20 12:27 f_400
+        0440 -r--r----- 1 root root    0 Nov 20 12:27 f_440
+        0444 -r--r--r-- 1 root root    0 Nov 20 12:27 f_444
+        4644 -rwSr--r-- 1 root root    0 Nov 20 12:27 f_4644
+        4755 -rwsr-xr-x 1 root root    0 Nov 20 12:27 f_4755
+        0600 -rw------- 1 root root    0 Nov 20 12:27 f_600
+        0620 -rw--w---- 1 root root    0 Nov 20 12:27 f_620
+        0640 -rw-r----- 1 root root    0 Nov 20 12:27 f_640
+        0644 -rw-r--r-- 1 root root    0 Nov 20 12:27 f_644
+        0660 -rw-rw---- 1 root root    0 Nov 20 12:27 f_660
+        0664 -rw-rw-r-- 1 root root    0 Nov 20 12:27 f_664
+        6644 -rwSr-Sr-- 1 root root    0 Nov 20 12:27 f_6644
+        0666 -rw-rw-rw- 1 root root    0 Nov 20 12:27 f_666
+        6755 -rwsr-sr-x 1 root root    0 Nov 20 12:27 f_6755
+        0700 -rwx------ 1 root root    0 Nov 20 12:27 f_700
+        7000 ---S--S--T 1 root root    0 Nov 20 12:27 f_7000
+        0711 -rwx--x--x 1 root root    0 Nov 20 12:27 f_711
+        0740 -rwxr----- 1 root root    0 Nov 20 12:27 f_740
+        0750 -rwxr-x--- 1 root root    0 Nov 20 12:27 f_750
+        0755 -rwxr-xr-x 1 root root    0 Nov 20 12:27 f_755
+        0770 -rwxrwx--- 1 root root    0 Nov 20 12:27 f_770
+        0775 -rwxrwxr-x 1 root root    0 Nov 20 12:27 f_775
+        0777 -rwxrwxrwx 1 root root    0 Nov 20 12:27 f_777
+        7777 -rwsrwsrwt 1 root root    0 Nov 20 12:27 f_7777
+  PASS  exhaustive: 4096 files, all 4096 mode patterns (0000-7777) match Python stat.filemode(): mismatches = 0
+  PASS  file-type characters seen in output: '-bcdlps' (regular, dir, symlink, fifo, socket, char-dev)
+
+== 6. Error handling and permission enforcement ==
+  PASS  myls nosuchdir    (exit 2)
+  PASS  myls flat nosuchdir hidden    (exit 2)
+  PASS  myls -l nosuchfile flat/a.txt    (exit 2)
+  --- running as unprivileged uid 65534 (root would bypass permission bits) ---
+  PASS  [uid 65534] myls dirs/locked    (exit 2)
+  PASS  [uid 65534] myls -l dirs/locked    (exit 2)
+  PASS  [uid 65534] myls dirs/listonly    (exit 0)
+  PASS  [uid 65534] myls dirs/searchonly    (exit 2)
+  PASS  [uid 65534] myls -R dirs    (exit 1)
+  PASS  [uid 65534] myls -l perms/f_000 perms/f_4755    (exit 0)
+  PASS  [uid 65534] myls -lh sizes    (exit 0)
+  --- -l inside a list-only (r--) directory: entries cannot be stat()ed ---
+  PASS  stderr identical to GNU ls, exit status 1 (minor problem): myls: cannot access 'dirs/listonly/b': Permission denied
+  PASS  unknown option -Z -> usage message, exit 2
+
+== 7. Robustness ==
+  PASS  1500-entry directory fully read through repeated getdents64 calls (1500 lines)
+  PASS  -a adds . and .. (1502 lines)
+  PASS  byte-order (C locale) sort: 10.txt|9.txt|B.txt|Zeta|a.txt|alpha|c.log|naïve.txt|with space.txt|
+  PASS  myls -l /dev/null    (exit 0)
+  PASS  myls /proc/self/fd    (exit 0)
+
+== 8. Real-world trees (thousands of entries, compared with GNU ls) ==
+  PASS  myls -R /usr/include    (exit 0)
+  PASS  myls -laR /usr/include    (exit 0)
+  PASS  myls -lR /etc    (exit 0)
+  PASS  myls -laiR /etc    (exit 0)
+  PASS  myls -lS /usr/bin    (exit 0)
+  PASS  myls -FR /usr/bin    (exit 0)
+  PASS  myls -lhtr /usr/bin    (exit 0)
+  PASS  myls -l /dev    (exit 0)
+  PASS  myls -la /dev    (exit 0)
+  PASS  myls -lh /dev    (exit 0)
+
+================ SUMMARY: 91 passed, 0 failed ================
+
+====================================================================================================
+In [21]   # sanitizer run
+----------------------------------------------------------------------------------------------------
+%%bash
+gcc -std=gnu11 -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -o myls_asan myls.c && echo 'sanitizer build OK'
+ASAN_OPTIONS=detect_leaks=1 ./run_tests.sh ./myls_asan 2>&1 | grep -E 'SUMMARY|FAIL|AddressSanitizer|LeakSanitizer|runtime error' 
+echo "sanitizer reports in full run: $(ASAN_OPTIONS=detect_leaks=1 ./run_tests.sh ./myls_asan 2>&1 | grep -cE 'AddressSanitizer|LeakSanitizer|runtime error')"
+
+----------------------------------------------------------------------------------------------------
+Out[21]
+sanitizer build OK
+================ SUMMARY: 91 passed, 0 failed ================
+sanitizer reports in full run: 0
+
+====================================================================================================
+In [22]   # mutation testing
+----------------------------------------------------------------------------------------------------
+%%bash
+python3 - <<'PY'
+s = open('myls.c').read()
+a = "s[9] = (m & S_ISVTX) ? ((m & S_IXOTH) ? 't' : 'T')"
+b = "r = (a->st.st_size < b->st.st_size) ? 1 : -1;"
+assert a in s and b in s
+open('/tmp/mut1.c', 'w').write(s.replace(a, "s[9] = (m & S_ISVTX) ? ((m & S_IXOTH) ? 'T' : 't')"))
+open('/tmp/mut2.c', 'w').write(s.replace(b, "r = (a->st.st_size < b->st.st_size) ? -1 : 1;"))
+PY
+for n in 1 2; do
+  gcc -o /tmp/myls_mut$n /tmp/mut$n.c
+  echo "=== MUTANT $n: $([ $n = 1 ] && echo 'sticky bit letters t/T swapped' || echo '-S sort order inverted') ==="
+  ./run_tests.sh /tmp/myls_mut$n 2>&1 | grep -E 'FAIL|SUMMARY' | cut -c1-140
+done
+
+----------------------------------------------------------------------------------------------------
+Out[22]
+=== MUTANT 1: sticky bit letters t/T swapped ===
+  FAIL  myls -ld flat hidden perms/d_1777    (exit gnu=0 mine=0)
+  FAIL  perm bits of perms vs stat
+  FAIL  exhaustive: 4096 files, all 4096 mode patterns (0000-7777) match Python stat.filemode(): mismatches = 2048
+  FAIL  myls -l /dev    (exit gnu=0 mine=0)
+  FAIL  myls -la /dev    (exit gnu=0 mine=0)
+  FAIL  myls -lh /dev    (exit gnu=0 mine=0)
+================ SUMMARY: 85 passed, 6 failed ================
+=== MUTANT 2: -S sort order inverted ===
+  FAIL  myls -S sizes    (exit gnu=0 mine=0)
+  FAIL  myls -Sr sizes    (exit gnu=0 mine=0)
+  FAIL  myls -lS sizes    (exit gnu=0 mine=0)
+  FAIL  myls -lhS sizes    (exit gnu=0 mine=0)
+  FAIL  myls -lS /usr/bin    (exit gnu=0 mine=0)
+================ SUMMARY: 86 passed, 5 failed ================
+
+====================================================================================================
+In [23]   # real-tree stress test
+----------------------------------------------------------------------------------------------------
+%%bash
+for args in "-R /usr/include" "-laR /usr/include" "-lR /etc" "-laiR /usr/lib/python3" "-lhR /usr/share/doc" "-FR /usr/bin" "-lS /usr/bin" "-l /dev"; do
+  ls $args > /tmp/g.out 2>&1; ge=$?;  ./myls $args > /tmp/m.out 2>&1; me=$?
+  sed -i 's/^ls:/myls:/' /tmp/g.out
+  cmp -s /tmp/g.out /tmp/m.out && [ $ge = $me ] && r=IDENTICAL || r=DIFFERENT
+  printf '%-10s myls %-26s %6s lines\n' $r "$args" "$(wc -l < /tmp/m.out)"
+done
+echo; echo '--- timing: myls -laR /usr vs GNU ls -laR /usr ---'
+echo -n 'lines: '; ./myls -laR /usr 2>/dev/null | wc -l
+time (./myls -laR /usr > /dev/null 2>&1)
+time (ls     -laR /usr > /dev/null 2>&1)
+
+----------------------------------------------------------------------------------------------------
+Out[23]
+IDENTICAL  myls -R /usr/include              8108 lines
+IDENTICAL  myls -laR /usr/include           10358 lines
+IDENTICAL  myls -lR /etc                     1299 lines
+IDENTICAL  myls -laiR /usr/lib/python3       4506 lines
+IDENTICAL  myls -lhR /usr/share/doc          6234 lines
+IDENTICAL  myls -FR /usr/bin                 1068 lines
+IDENTICAL  myls -lS /usr/bin                 1068 lines
+IDENTICAL  myls -l /dev                       111 lines
+
+--- timing: myls -laR /usr vs GNU ls -laR /usr ---
+lines: 172067
+[stderr]
+
+real	0m0.260s
+user	0m0.116s
+sys	0m0.143s
+
+real	0m0.390s
+user	0m0.131s
+sys	0m0.258s
